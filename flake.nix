@@ -28,21 +28,16 @@
             pkgs.git              # Stack often needs it
           ];
 
-          # Make Stack use system GHC so it doesn't download its own toolchain.
-          # This plays nicely with Nix.
-          STACK_YAML = "stack.yaml";
-          STACK_ROOT = ".stack";
+          # Tell Stack to use the Nix-provided GHC instead of downloading its own.
           STACK_IN_NIX_SHELL = "true";
+          STACK_SYSTEM_GHC = "true";
+          STACK_INSTALL_GHC = "false";
 
           shellHook = ''
             echo "Haskell dev shell ready."
             echo "GHC: $(ghc --version 2>/dev/null || true)"
             echo "Stack: $(stack --version 2>/dev/null || true)"
             echo "HLS: $(haskell-language-server-wrapper --version 2>/dev/null || true)"
-            echo ""
-            echo "Tip: in your stack.yaml, set:"
-            echo "  system-ghc: true"
-            echo "  install-ghc: false"
           '';
         };
       });
