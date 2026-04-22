@@ -83,6 +83,7 @@ dinsert key val dict = (key, val):dict
 --- Lifters
 --- -------
 
+-- lifts a function that is done on IStack to be one that alters the entire ForthState
 liftIStackOp :: (IStack -> Maybe IStack) -> ForthState -> ForthState
 liftIStackOp op (i, d, o)
     = case op i of
@@ -98,8 +99,8 @@ liftIntOp _  _        = Nothing
 --- ### `liftCompOp`
 
 liftCompOp :: (Integer -> Integer -> Bool) -> IStack -> Maybe IStack
-liftCompOp = undefined
-
+liftCompOp op (x:y:xs) = if op y x then Just (-1:xs) else Just (0:xs)
+liftCompOp _ _ = Nothing
 
 --- The Dictionary
 --- --------------
@@ -122,21 +123,34 @@ initCompileOp = [ (":",    Define)
 --- ### Arithmetic Operators
 
 initArith :: Dictionary
-initArith = [ ("+",  Prim $ liftIStackOp $ liftIntOp (+))
+initArith = [ ("+", Prim $ liftIStackOp $ liftIntOp (+)),
+              ("-", Prim $ liftIStackOp $ liftIntOp (-)),
+              ("*", Prim $ liftIStackOp $ liftIntOp (*)),
+              ("/", Prim $ liftIStackOp $ liftIntOp div)
             ]
 
 --- ### Comparison Operators
 
 initComp :: Dictionary
-initComp = []
+initComp = [ ("<",  Prim $ liftIStackOp $ liftCompOp (<)),
+             (">",  Prim $ liftIStackOp $ liftCompOp (>)),
+             ("<=", Prim $ liftIStackOp $ liftCompOp (<=)),
+             (">=", Prim $ liftIStackOp $ liftCompOp (>=)),
+             ("=",  Prim $ liftIStackOp $ liftCompOp (==)),
+             ("!=", Prim $ liftIStackOp $ liftCompOp (/=))
+           ]
 
 --- ### Stack Manipulations
 
 initIStackOp :: Dictionary
-initIStackOp = [ ("dup",  Prim $ liftIStackOp istackDup)
+initIStackOp = [ ("dup",  Prim $ liftIStackOp istackDup),
+                 ("swap", Prim $ liftIStackOp istackSwap),
+                 ("drop", Prim $ liftIStackOp istackDrop),
+                 ("rot",  Prim $ liftIStackOp istackRot)
                ]
 
-initPrintOp = [ (".",  Prim printPop)
+initPrintOp = [ (".",  Prim printPop),
+                (".S", Prim printStack)
               ]
 
 istackDup :: IStack -> Maybe IStack
@@ -144,13 +158,16 @@ istackDup (i:is) = Just $ i:i:is
 istackDup _      = Nothing
 
 istackSwap :: IStack -> Maybe IStack
-istackSwap = undefined
+istackSwap (x:y:xs) = Just $ y:x:xs
+istackSwap _        = Nothing
 
 istackDrop :: IStack -> Maybe IStack
-istackDrop = undefined
+istackDrop (i:is) = Just is
+istackDrop _      = Nothing
 
 istackRot :: IStack -> Maybe IStack
-istackRot = undefined
+istackRot (x:y:z:xs) = Just $ z:x:y:xs
+istackRot _          = Nothing
 
 --- ### Popping the Stack
 
@@ -162,7 +179,11 @@ printPop _ = underflow
 --- ### Printing the Stack
 
 printStack :: ForthState -> ForthState
-printStack (istack, dict, out) = undefined
+printStack (istack, dict, out) =
+    let
+        reversed = reverse $ map show istack
+        result = unwords reversed
+    in (istack, dict, out ++ [result])
 
 --- Evaluator
 --- ---------
@@ -191,8 +212,8 @@ eval (w:ws) state@(istack, dict, out)
 --- --------
 
 --- ### Definite Loops
-transForLoop :: Transition -> (ForthState -> ForthState)
-transForLoop kloop (i:is, d, o) =
+transForLoop :: Transition -> (ForthState -> ForthState) -- returns a function waiting for the second parameter (a ForthState)
+transForLoop kloop (i:is, d, o) = -- send param is the state (not given when we call transForLoop in cstackNext)
     if i < 0 then
         (is, d, o)
     else
@@ -212,25 +233,45 @@ cstackNext _ = Nothing
 
 --- ### Conditionals
 
+transIfElse :: Transition -> Transition -> (ForthState -> ForthState)
+transIfElse kif kelse (i:is, d, o) =
+    if i /= 0 then kif (is, d, o)
+    else kelse (is, d, o)
+transIfElse _ _ _ = underflow
+
+transIf :: Transition -> (ForthState -> ForthState)
+transIf kif (i:is, d, o) =
+    if i/= 0 then kif (is, d, o)
+    else (is, d, o)
+transIf _ _ = underflow
+
 cstackIf :: CStack -> Maybe CStack
-cstackIf cstack = undefined
+cstackIf cstack = Just $ ("if", id):cstack
 
 cstackElse :: CStack -> Maybe CStack
-cstackElse cstack@(("if", _):_) = undefined
+cstackElse cstack@(("if", _):_) = Just $ ("else", id):cstack
 cstackElse _ = Nothing
 
 cstackThen :: CStack -> Maybe CStack
-cstackThen (("else", kelse):("if", kif):(c, kold):cstack) = undefined
-cstackThen (("if", kif):(c, kold):cstack) = undefined
+cstackThen (("else", kelse):("if", kif):(c, kold):cstack) = Just ((c, knew):cstack) where knew = (transIfElse kif kelse) . kold
+cstackThen (("if", kif):(c, kold):cstack) = Just ((c, knew):cstack) where knew = (transIf kif) . kold
 cstackThen _ = Nothing
 
 --- ### Indefinite Loops
+
+transUntil :: Transition -> (ForthState -> ForthState)
+transUntil kloop state =
+    case kloop state of
+        (i:is, d, o) -> if i == 0 then transUntil kloop (is, d, o)
+                        else (is, d, o)
+        _            -> underflow
 
 cstackBegin :: CStack -> Maybe CStack
 cstackBegin cstack = Just $ ("begin", id):cstack
 
 cstackUntil :: CStack -> Maybe CStack
-cstackUntil (("begin", kloop):(c, kold):cstack) = undefined
+cstackUntil (("begin", kloop):(c, kold):cstack) =
+    Just ((c, knew):cstack) where knew = (transUntil kloop) . kold
 cstackUntil _ = Nothing
 
 
@@ -242,7 +283,7 @@ compileDef :: [String] -> Dictionary -> Either ErrorMsg ([String], Dictionary)
 compileDef [] _ = Left msgZeroLenDef
 compileDef (name:ws) dict
     = case  compile ws dict [("", id)] of
-       Right (rest, f) -> Right (rest, dinsert name (Prim f) dict)
+       Right (rest, f) -> Right (rest, dinsert name (Prim f) dict) -- puts result of compile into dict with key name
        Left msg -> Left msg
 
 compile :: [String] -> Dictionary -> CStack
@@ -251,10 +292,10 @@ compile [] _ _ = Left "The definition does not end"
 
 compile (w:ws) dict cstack
     = case dlookup w dict of
-        Prim f    -> compile ws dict (updateTop f cstack)
-        Num i     -> compile ws dict (updateTop f cstack)
+        Prim f    -> compile ws dict (updateTop f cstack) -- compile that function onto the def we're building
+        Num i     -> compile ws dict (updateTop f cstack) -- put a push operation onto stack (lifts it first)
                      where f = (liftIStackOp (\is -> Just (i:is)))
-        Compile cf-> case cf cstack of
+        Compile cf-> case cf cstack of -- cf is a "compiler function"
                 Just cstack' -> compile ws dict cstack'
                 Nothing -> Left $ msgUnstructured w
         Define    -> Left "Nested definition is not allowed"
