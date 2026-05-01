@@ -12,6 +12,7 @@ import Control.Monad
 import Control.Monad.State
 import Control.Monad.Except
 import Data.Foldable
+import Data.Bool (Bool(True, False))
 
 --- ### Helper functions for lifting and lowering
 
@@ -97,7 +98,7 @@ append vv = throwError $ UnexpectedArgs vv
 -- Examples:
 --   (eval '(+ 1 2 3))  => 6
 evalPrim :: [Val] -> EvalState Val
-evalPrim = const $ unimplemented "Primitive function `eval`"
+evalPrim [x] = eval x
 
 -- Primitive function `=`, throwing type error for mismatch
 -- `=` is a comparison operator for numbers and booleans
@@ -143,34 +144,50 @@ eq (x:xs) = return $ Boolean $ foldl (eq' x) True xs where
 -- or an empty list (null)
 -- TODO
 isList :: [Val] -> EvalState Val
-isList = const $ unimplemented "Primitive function `list?`"
+isList [Pair a b] = isList [b]
+isList [Nil] = return $ Boolean True
+isList [x] = return $ Boolean False
+isList meow = throwError $ UnexpectedArgs meow
 
 -- Primitive function `symbol?` predicate
 -- TODO
 isSymbol :: [Val] -> EvalState Val
-isSymbol = const $ unimplemented "Primitive function `symbol?`"
+isSymbol [Symbol s] = return $ Boolean True
+isSymbol [] = throwError $ UnexpectedArgs []
+isSymbol _ = return $ Boolean False
 
 -- Primitive function `pair?` predicate
 -- TODO
 isPair :: [Val] -> EvalState Val
-isPair = const $ unimplemented "Primitive function `pair?`"
+isPair [Pair a b] = return $ Boolean True
+isPair [] = throwError $ UnexpectedArgs []
+isPair [x] = return $ Boolean False
+isPair _ = throwError $ UnexpectedArgs []
 
 -- Primitive function `number?` predicate
 -- TODO
 isNumber :: [Val] -> EvalState Val
-isNumber = const $ unimplemented "Primitive function `number?`"
+isNumber [Number a] = return $ Boolean True
+isNumber [] = throwError $ UnexpectedArgs []
+isNumber _ = return $ Boolean False
 
 -- Primitive function `boolean?` predicate
 -- TODO
 isBoolean :: [Val] -> EvalState Val
-isBoolean = const $ unimplemented "Primitive function `boolean?`"
+isBoolean [] = throwError $ UnexpectedArgs []
+isBoolean [Boolean x] = return $ Boolean True
+isBoolean [_] = return $ Boolean False
+isBoolean xx = throwError $ UnexpectedArgs xx
 
 -- Primitive function `null?` predicate
 -- An empty list or its *equivalent* value is null
 -- Note: Think about what's equivalent
 -- TODO
 isNull :: [Val] -> EvalState Val
-isNull = const $ unimplemented "Primitive function `null?`"
+isNull [Nil] = return $ Boolean True
+isNull [] = throwError $ UnexpectedArgs []
+isNull [x] = return $ Boolean False
+isNull _ = throwError $ UnexpectedArgs []
 
 --- ### Runtime
 
@@ -197,4 +214,10 @@ runtime = H.fromList [ ("+", liftIntVargOp (+) 0)
                      , ("append", PrimFunc append)
                      , ("symbol?", PrimFunc isSymbol)
                      -- TODO: Insert more runtime bindings here
+                     , ("list?", PrimFunc isList)
+                     , ("pair?", PrimFunc isPair)
+                     , ("null?", PrimFunc isNull)
+                     , ("number?", PrimFunc isNumber)
+                     , ("boolean?", PrimFunc isBoolean)
+                     , ("eval", PrimFunc evalPrim)
                      ]
